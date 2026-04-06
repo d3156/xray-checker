@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -52,6 +53,55 @@ type PageData struct {
 	ShowServerDetails          bool
 	IsPublic                   bool
 	SubscriptionName           string
+	ProxiesJSON                template.JS
+}
+
+type dashboardProxy struct {
+	Name       string `json:"name"`
+	StableID   string `json:"stableId"`
+	ServerInfo string `json:"serverInfo,omitempty"`
+	ProxyPort  int    `json:"proxyPort,omitempty"`
+	URL        string `json:"url,omitempty"`
+	Index      int    `json:"index"`
+	Status     bool   `json:"status"`
+	Latency    string `json:"latency"`
+	LatencyMs  int64  `json:"latencyMs"`
+}
+
+func BuildProxiesJSON(endpoints []EndpointInfo, showServerDetails bool, isPublic bool) (template.JS, error) {
+	proxies := make([]dashboardProxy, 0, len(endpoints))
+	for _, ep := range endpoints {
+		proxy := dashboardProxy{
+			Name:      ep.Name,
+			StableID:  ep.StableID,
+			Index:     ep.Index,
+			Status:    ep.Status,
+			Latency:   formatLatency(ep.Latency),
+			LatencyMs: ep.Latency.Milliseconds(),
+		}
+		if showServerDetails {
+			proxy.ServerInfo = ep.ServerInfo
+			proxy.ProxyPort = ep.ProxyPort
+		}
+		if !isPublic {
+			proxy.URL = ep.URL
+		}
+		proxies = append(proxies, proxy)
+	}
+
+	data, err := json.Marshal(proxies)
+	if err != nil {
+		return "[]", err
+	}
+
+	return template.JS(data), nil
+}
+
+func formatLatency(d time.Duration) string {
+	if d == 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%dms", d.Milliseconds())
 }
 
 func RenderIndex(w io.Writer, data PageData) error {

@@ -85,6 +85,13 @@ func IndexHandler(version string, proxyChecker *checker.ProxyChecker) http.Handl
 			SubscriptionName:           subscription.GetSubscriptionName(),
 		}
 
+		proxiesJSON, err := BuildProxiesJSON(endpoints, showServerDetails, isPublic)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		data.ProxiesJSON = proxiesJSON
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		if err := RenderIndex(w, data); err != nil {

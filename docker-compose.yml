@@ -5,8 +5,9 @@ services:
     ports:
       - "2112:2112"
     environment:
-      - SUBSCRIPTION_URL='https://...'
-      - EXPORT_TOKEN='test-token'
-      - EXPORT_BASE64='false'
-      - EXPORT_MAX_LATENCY_MS='5000'
-      - EXPORT_MAX_NODES='5'
+      - SUBSCRIPTION_URL=https://...
+      - EXPORT_TOKEN=test-token
+      - EXPORT_BASE64=false
+      - EXPORT_MAX_LATENCY_MS=5000
+      - EXPORT_MAX_NODES=5
+      - PROXY_CHECK_INTERVAL=3600

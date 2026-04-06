@@ -856,7 +856,7 @@
         x-show="showProxies"
         class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 mb-4"
       >
-        <template x-for="(proxy, idx) in filteredProxies" :key="proxy.stableId">
+        <template x-for="(proxy, idx) in filteredProxies" :key="proxy.renderKey">
           <div
             class="proxy-card group card rounded-lg px-3 py-2.5 flex items-center gap-3 transition-all duration-150"
             :class="initialLoad && 'animate'"
@@ -1065,11 +1065,9 @@
             return classes.join(' ');
           },
 
-          proxies: [
-            {{ range $.Endpoints }}
-            { name: "{{.Name}}", stableId: "{{.StableID}}", {{ if $.ShowServerDetails }}serverInfo: "{{.ServerInfo}}", proxyPort: {{.ProxyPort}}, {{ end }}{{ if not $.IsPublic }}url: "{{.URL}}", {{ end }}index: {{.Index}}, status: {{.Status}}, latency: "{{ formatLatency .Latency }}", latencyMs: {{ .Latency.Milliseconds }} },
-            {{ end }}
-          ],
+          proxies: {{ .ProxiesJSON }},
+
+          proxiesEndpoint: {{ if .IsPublic }}'./api/v1/public/proxies'{{ else }}'./api/v1/proxies'{{ end }},
 
           get stats() {
             const online = this.proxies.filter(p => p.status).length;
@@ -1182,8 +1180,93 @@
               }
             }
 
+            this.normalizePersistedControls();
+            this.loadProxies();
+
             if (this.autoRefresh) this.startCountdown();
             setTimeout(() => this.initialLoad = false, 500);
+          },
+
+          normalizeProxy(proxy) {
+            const latencyMs = proxy.latencyMs || 0;
+            const stableId = proxy.stableId || '';
+            const index = proxy.index ?? 0;
+            const normalized = {
+              name: proxy.name,
+              stableId,
+              index,
+              status: typeof proxy.online === 'boolean' ? proxy.online : !!proxy.status,
+              latencyMs,
+              latency: latencyMs > 0 ? latencyMs + 'ms' : 'n/a'
+            };
+
+            if (proxy.serverInfo) {
+              normalized.serverInfo = proxy.serverInfo;
+            } else if (proxy.server && proxy.port) {
+              normalized.serverInfo = proxy.server + ':' + proxy.port;
+            }
+
+            if (typeof proxy.proxyPort !== 'undefined') {
+              normalized.proxyPort = proxy.proxyPort;
+            }
+
+            if (proxy.url) {
+              normalized.url = proxy.url;
+            } else if (normalized.stableId) {
+              normalized.url = './config/' + normalized.stableId;
+            }
+
+            normalized.renderKey = [
+              normalized.stableId || 'no-stable-id',
+              normalized.index,
+              normalized.name || 'no-name'
+            ].join(':');
+
+            return normalized;
+          },
+
+          async loadProxies() {
+            try {
+              const res = await fetch(this.proxiesEndpoint);
+              const json = await res.json();
+              if (json.success && Array.isArray(json.data)) {
+                this.proxies = json.data.map(proxy => this.normalizeProxy(proxy));
+                this.normalizePersistedControls();
+
+                if (this.badgeMode && this.badgeProxy) {
+                  const updated = this.proxies.find(p => p.stableId === this.badgeProxy.stableId);
+                  if (updated) {
+                    this.badgeProxy = updated;
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('Failed to load proxies:', e);
+            }
+          },
+
+          normalizePersistedControls() {
+            const validFilters = ['all', 'online', 'offline'];
+            const validSorts = ['default', 'name', 'latency-asc', 'latency-desc', 'status'];
+
+            if (!validFilters.includes(this.filter)) {
+              this.filter = 'all';
+              localStorage.removeItem('filter');
+            }
+
+            if (!validSorts.includes(this.sort)) {
+              this.sort = 'default';
+              localStorage.removeItem('sort');
+            }
+
+            if (this.search || this.filter === 'all' || this.proxies.length === 0) {
+              return;
+            }
+
+            if (this.filteredProxies.length === 0) {
+              this.filter = 'all';
+              localStorage.setItem('filter', 'all');
+            }
           },
 
           toggleDarkMode() {
@@ -1227,31 +1310,7 @@
           },
 
           async refreshData() {
-            try {
-              const res = await fetch('./api/v1/public/proxies');
-              const json = await res.json();
-              if (json.success && json.data) {
-                json.data.forEach(updated => {
-                  const proxy = this.proxies.find(p => p.name === updated.name);
-                  if (proxy) {
-                    proxy.status = updated.online;
-                    proxy.latencyMs = updated.latencyMs;
-                    proxy.latency = updated.latencyMs > 0 ? updated.latencyMs + 'ms' : 'n/a';
-                  }
-                });
-                // Update badge proxy if in badge mode
-                if (this.badgeMode && this.badgeProxy) {
-                  const updated = json.data.find(p => p.stableId === this.badgeProxy.stableId);
-                  if (updated) {
-                    this.badgeProxy.status = updated.online;
-                    this.badgeProxy.latencyMs = updated.latencyMs;
-                    this.badgeProxy.latency = updated.latencyMs > 0 ? updated.latencyMs + 'ms' : 'n/a';
-                  }
-                }
-              }
-            } catch (e) {
-              console.error('Failed to refresh:', e);
-            }
+            await this.loadProxies();
             this.countdown = {{ .CheckInterval }};
           },
 
