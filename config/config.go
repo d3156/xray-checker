@@ -23,9 +23,14 @@ func Parse(version string) {
 
 type CLI struct {
 	Subscription struct {
-		URLs           []string `name:"subscription-url" help:"URL(s) of the subscription (can be specified multiple times)" required:"true" env:"SUBSCRIPTION_URL"`
-		Update         bool     `name:"subscription-update" help:"Whether to recheck the subscription" default:"true" env:"SUBSCRIPTION_UPDATE"`
-		UpdateInterval int      `name:"subscription-update-interval" help:"Interval for subscription updates in seconds" default:"300" env:"SUBSCRIPTION_UPDATE_INTERVAL"`
+		URLs             []string `name:"subscription-url" help:"URL(s) of the subscription (can be specified multiple times)" required:"true" env:"SUBSCRIPTION_URL"`
+		Update           bool     `name:"subscription-update" help:"Whether to recheck the subscription" default:"true" env:"SUBSCRIPTION_UPDATE"`
+		UpdateInterval   int      `name:"subscription-update-interval" help:"Interval for subscription updates in seconds" default:"300" env:"SUBSCRIPTION_UPDATE_INTERVAL"`
+		ExportToken      string   `name:"export-token" help:"Token for subscription export endpoint" default:"" env:"EXPORT_TOKEN"`
+		ExportMaxLatency int64    `name:"export-max-latency-ms" help:"Maximum latency in milliseconds for exported proxies" default:"800" env:"EXPORT_MAX_LATENCY_MS"`
+		ExportRandomize  bool     `name:"export-randomize" help:"Shuffle exported proxies instead of sorting by latency" default:"false" env:"EXPORT_RANDOMIZE"`
+		ExportMaxNodes   int      `name:"export-max-nodes" help:"Maximum number of exported proxies, 0 means unlimited" default:"50" env:"EXPORT_MAX_NODES"`
+		ExportBase64     bool     `name:"export-base64" help:"Encode exported subscription as base64" default:"true" env:"EXPORT_BASE64"`
 	} `embed:"" prefix:""`
 
 	Proxy struct {

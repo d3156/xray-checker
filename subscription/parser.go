@@ -126,15 +126,18 @@ type libXrayXhttpSettings struct {
 }
 
 type originalLinkData struct {
+	Protocol      string
 	Name          string
 	Encryption    string
 	Type          string
 	Path          string
 	Host          string
 	AllowInsecure bool
+	RawURI        string
 }
 
 type parsedLink struct {
+	Protocol      string
 	Server        string
 	Port          int
 	Name          string
@@ -249,7 +252,7 @@ func (p *Parser) Parse(subscriptionData string) (*ParseResult, error) {
 
 // parseViaLibXray attempts to parse all configs at once via libXray.
 // Returns parsed configs or nil if parsing fails.
-func (p *Parser) parseViaLibXray(cleanedData []byte, originalData map[string]*originalLinkData) []*models.ProxyConfig {
+func (p *Parser) parseViaLibXray(cleanedData []byte, originalData map[string][]*originalLinkData) []*models.ProxyConfig {
 	base64Data := base64.StdEncoding.EncodeToString(cleanedData)
 
 	resultBase64 := libXray.ConvertShareLinksToXrayJson(base64Data)
@@ -275,7 +278,7 @@ func (p *Parser) parseViaLibXray(cleanedData []byte, originalData map[string]*or
 }
 
 // parseLineByLine parses each config line individually, skipping broken ones.
-func (p *Parser) parseLineByLine(cleanedData []byte, originalData map[string]*originalLinkData) []*models.ProxyConfig {
+func (p *Parser) parseLineByLine(cleanedData []byte, originalData map[string][]*originalLinkData) []*models.ProxyConfig {
 	lines := strings.Split(string(cleanedData), "\n")
 	var allConfigs []*models.ProxyConfig
 	skippedCount := 0
@@ -326,7 +329,7 @@ func (p *Parser) parseLineByLine(cleanedData []byte, originalData map[string]*or
 }
 
 // extractOutbounds extracts proxy configs from libXray response data.
-func (p *Parser) extractOutbounds(data json.RawMessage, originalData map[string]*originalLinkData) []*models.ProxyConfig {
+func (p *Parser) extractOutbounds(data json.RawMessage, originalData map[string][]*originalLinkData) []*models.ProxyConfig {
 	var xrayConfig struct {
 		Outbounds []json.RawMessage `json:"outbounds"`
 	}
@@ -546,8 +549,8 @@ func (p *Parser) isPrintableString(s string) bool {
 	return true
 }
 
-func (p *Parser) parseOriginalLinks(rawData []byte) map[string]*originalLinkData {
-	result := make(map[string]*originalLinkData)
+func (p *Parser) parseOriginalLinks(rawData []byte) map[string][]*originalLinkData {
+	result := make(map[string][]*originalLinkData)
 
 	decoded := p.tryDecodeBase64(rawData)
 
@@ -560,15 +563,17 @@ func (p *Parser) parseOriginalLinks(rawData []byte) map[string]*originalLinkData
 
 		data := p.parseShareLink(line)
 		if data != nil {
-			key := fmt.Sprintf("%s:%d", data.Server, data.Port)
-			result[key] = &originalLinkData{
+			key := p.makeOriginalLinkKey(data.Protocol, data.Server, data.Port)
+			result[key] = append(result[key], &originalLinkData{
+				Protocol:      data.Protocol,
 				Name:          data.Name,
 				Encryption:    data.Encryption,
 				Type:          data.Type,
 				Path:          data.Path,
 				Host:          data.Host,
 				AllowInsecure: data.AllowInsecure,
-			}
+				RawURI:        line,
+			})
 		}
 	}
 
@@ -586,7 +591,8 @@ func (p *Parser) parseShareLink(link string) *parsedLink {
 	}
 
 	result := &parsedLink{
-		Name: u.Fragment,
+		Protocol: u.Scheme,
+		Name:     u.Fragment,
 	}
 
 	host := u.Hostname()
@@ -624,6 +630,7 @@ func (p *Parser) parseVMessLink(link string) *parsedLink {
 	}
 
 	result := &parsedLink{}
+	result.Protocol = "vmess"
 
 	if ps, ok := vmess["ps"].(string); ok {
 		result.Name = ps
@@ -658,7 +665,7 @@ func (p *Parser) parseVMessLink(link string) *parsedLink {
 	return result
 }
 
-func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData map[string]*originalLinkData) (*models.ProxyConfig, error) {
+func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData map[string][]*originalLinkData) (*models.ProxyConfig, error) {
 	var baseOutbound struct {
 		Protocol       string                 `json:"protocol"`
 		Tag            string                 `json:"tag"`
@@ -836,8 +843,7 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 		}
 	}
 
-	key := fmt.Sprintf("%s:%d", pc.Server, pc.Port)
-	if orig, ok := originalData[key]; ok {
+	if orig := p.matchOriginalLink(pc, originalData); orig != nil {
 		if pc.Encryption == "" || pc.Encryption == "none" {
 			if orig.Encryption != "" {
 				pc.Encryption = orig.Encryption
@@ -846,6 +852,7 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 		if orig.AllowInsecure {
 			pc.AllowInsecure = true
 		}
+		pc.RawURI = orig.RawURI
 	}
 
 	if err := pc.Validate(); err != nil {
@@ -855,6 +862,57 @@ func (p *Parser) convertOutbound(raw json.RawMessage, index int, originalData ma
 	pc.StableID = pc.GenerateStableID()
 
 	return pc, nil
+}
+
+func (p *Parser) makeOriginalLinkKey(protocol, server string, port int) string {
+	return fmt.Sprintf("%s|%s:%d", protocol, server, port)
+}
+
+func (p *Parser) matchOriginalLink(pc *models.ProxyConfig, originalData map[string][]*originalLinkData) *originalLinkData {
+	key := p.makeOriginalLinkKey(pc.Protocol, pc.Server, pc.Port)
+	candidates := originalData[key]
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	bestIndex := 0
+	bestScore := -1
+
+	for i, candidate := range candidates {
+		score := 0
+		if candidate.Name != "" && candidate.Name == pc.Name {
+			score += 4
+		}
+		if candidate.Encryption != "" && candidate.Encryption == pc.Encryption {
+			score += 3
+		}
+		if candidate.Type != "" && candidate.Type == pc.Type {
+			score += 2
+		}
+		if candidate.Path != "" && candidate.Path == pc.Path {
+			score += 2
+		}
+		if candidate.Host != "" && candidate.Host == pc.Host {
+			score += 1
+		}
+
+		if score > bestScore {
+			bestIndex = i
+			bestScore = score
+		}
+	}
+
+	matched := candidates[bestIndex]
+	copy(candidates[bestIndex:], candidates[bestIndex+1:])
+	candidates[len(candidates)-1] = nil
+	remaining := candidates[:len(candidates)-1]
+	if len(remaining) == 0 {
+		delete(originalData, key)
+	} else {
+		originalData[key] = remaining
+	}
+
+	return matched
 }
 
 func (p *Parser) tryDecodeBase64(data []byte) []byte {

@@ -2,9 +2,12 @@ package web
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"xray-checker/checker"
@@ -224,6 +227,81 @@ func APIStatusHandler(proxyChecker *checker.ProxyChecker) http.HandlerFunc {
 			AvgLatencyMs: avgLatency,
 		})
 	}
+}
+
+func APISubscriptionExportHandler(proxyChecker *checker.ProxyChecker) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isExportAuthorized(r) {
+			writeError(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		proxies := proxyChecker.GetProxies()
+		filtered := make([]ProxyInfo, 0, len(proxies))
+
+		for _, proxy := range proxies {
+			if proxy.RawURI == "" {
+				continue
+			}
+
+			status, latency, err := proxyChecker.GetProxyStatus(proxy.Name)
+			if err != nil || !status {
+				continue
+			}
+
+			latencyMs := latency.Milliseconds()
+			if latencyMs <= 0 || latencyMs > config.CLIConfig.Subscription.ExportMaxLatency {
+				continue
+			}
+
+			filtered = append(filtered, toProxyInfo(proxy, status, latency, 0))
+		}
+
+		if config.CLIConfig.Subscription.ExportRandomize {
+			rand.New(rand.NewSource(time.Now().UnixNano())).Shuffle(len(filtered), func(i, j int) {
+				filtered[i], filtered[j] = filtered[j], filtered[i]
+			})
+		} else {
+			sort.Slice(filtered, func(i, j int) bool {
+				return filtered[i].LatencyMs < filtered[j].LatencyMs
+			})
+		}
+
+		if maxNodes := config.CLIConfig.Subscription.ExportMaxNodes; maxNodes > 0 && len(filtered) > maxNodes {
+			filtered = filtered[:maxNodes]
+		}
+
+		lines := make([]string, 0, len(filtered))
+		for _, proxy := range filtered {
+			originalProxy, exists := proxyChecker.GetProxyByStableID(proxy.StableID)
+			if !exists || originalProxy.RawURI == "" {
+				continue
+			}
+			lines = append(lines, originalProxy.RawURI)
+		}
+
+		body := strings.Join(lines, "\n")
+		if config.CLIConfig.Subscription.ExportBase64 {
+			body = base64.StdEncoding.EncodeToString([]byte(body))
+		}
+
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+func isExportAuthorized(r *http.Request) bool {
+	expectedToken := config.CLIConfig.Subscription.ExportToken
+	if expectedToken == "" {
+		return false
+	}
+
+	providedToken := r.URL.Query().Get("token")
+	if providedToken == "" {
+		providedToken = r.Header.Get("X-Export-Token")
+	}
+
+	return providedToken != "" && providedToken == expectedToken
 }
 
 // APIConfigHandler returns current configuration

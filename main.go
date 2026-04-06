@@ -166,6 +166,7 @@ func main() {
 	mux.Handle("/health", web.HealthHandler())
 	mux.Handle("/static/", web.StaticHandler())
 	mux.Handle("/api/v1/public/proxies", web.APIPublicProxiesHandler(proxyChecker))
+	mux.Handle("/api/v1/subscription/export", web.APISubscriptionExportHandler(proxyChecker))
 
 	web.RegisterConfigEndpoints(*proxyConfigs, proxyChecker, config.CLIConfig.Xray.StartPort)
 

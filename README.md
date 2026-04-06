@@ -75,6 +75,24 @@ services:
 
 Detailed installation and configuration documentation is available at [xray-checker.kutovoy.dev](https://xray-checker.kutovoy.dev/intro/quick-start)
 
+## Export Endpoint
+
+`GET /api/v1/subscription/export` returns the current filtered proxy subscription as plain text.
+
+- Auth via `?token=` query parameter or `X-Export-Token` header
+- Only proxies with `status=up` and latency in range `1..EXPORT_MAX_LATENCY_MS` are exported
+- Output is sorted by latency or shuffled when `EXPORT_RANDOMIZE=true`
+- Output is limited by `EXPORT_MAX_NODES` (`0` means unlimited)
+- Output is base64-encoded when `EXPORT_BASE64=true`
+
+Environment variables:
+
+- `EXPORT_TOKEN` - token required for export endpoint access
+- `EXPORT_MAX_LATENCY_MS` - maximum allowed latency for exported proxies, default `800`
+- `EXPORT_RANDOMIZE` - shuffle filtered proxies instead of sorting by latency, default `false`
+- `EXPORT_MAX_NODES` - maximum number of exported proxies, default `50`, `0` means unlimited
+- `EXPORT_BASE64` - base64-encode the newline-joined exported URIs, default `true`
+
 ## 📈 Project Statistics
 
 <a href="https://star-history.com/#kutovoys/xray-checker&Date">
