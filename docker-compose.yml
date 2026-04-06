@@ -1,0 +1,12 @@
+services:
+  xray-checker:
+    build: .
+    image: xray-checker:local
+    ports:
+      - "2112:2112"
+    environment:
+      - SUBSCRIPTION_URL='https://...'
+      - EXPORT_TOKEN='test-token'
+      - EXPORT_BASE64='false'
+      - EXPORT_MAX_LATENCY_MS='5000'
+      - EXPORT_MAX_NODES='5'
