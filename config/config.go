@@ -35,6 +35,7 @@ type CLI struct {
 
 	Proxy struct {
 		CheckInterval   int    `name:"proxy-check-interval" help:"Interval for proxy checks in seconds" default:"300" env:"PROXY_CHECK_INTERVAL"`
+		CheckParallel   int    `name:"proxy-check-parallel" help:"Maximum number of simultaneous proxy checks, 0 means unlimited" default:"50" env:"PROXY_CHECK_PARALLEL"`
 		CheckMethod     string `name:"proxy-check-method" help:"Method for checking proxy, ip, status or download" default:"ip" env:"PROXY_CHECK_METHOD"`
 		IpCheckUrl      string `name:"proxy-ip-check-url" help:"Service URL for IP checking" default:"https://api.ipify.org?format=text" env:"PROXY_IP_CHECK_URL"`
 		StatusCheckUrl  string `name:"proxy-status-check-url" help:"Response status generator, used by check-method=status" default:"http://cp.cloudflare.com/generate_204" env:"PROXY_STATUS_CHECK_URL"`
@@ -76,6 +77,9 @@ type CLI struct {
 func (c *CLI) Validate() error {
 	if c.Web.Public && !c.Metrics.Protected {
 		return fmt.Errorf("--web-public requires --metrics-protected to be enabled")
+	}
+	if c.Proxy.CheckParallel < 0 {
+		return fmt.Errorf("--proxy-check-parallel must be greater than or equal to 0")
 	}
 	return nil
 }

@@ -32,11 +32,12 @@ type ProxyChecker struct {
 	downloadTimeout int
 	downloadMinSize int64
 	checkMethod     string
+	checkParallel   int
 	mu              sync.RWMutex
 	generation      uint64
 }
 
-func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string) *ProxyChecker {
+func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string, checkParallel int) *ProxyChecker {
 	return &ProxyChecker{
 		proxies:   proxies,
 		startPort: startPort,
@@ -50,6 +51,7 @@ func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL st
 		downloadTimeout: downloadTimeout,
 		downloadMinSize: downloadMinSize,
 		checkMethod:     checkMethod,
+		checkParallel:   checkParallel,
 	}
 }
 
@@ -353,13 +355,25 @@ func (pc *ProxyChecker) CheckAllProxies() {
 	proxiesToCheck := make([]*models.ProxyConfig, len(pc.proxies))
 	copy(proxiesToCheck, pc.proxies)
 	currentGeneration := atomic.LoadUint64(&pc.generation)
+	checkParallel := pc.checkParallel
 	pc.mu.RUnlock()
 
 	var wg sync.WaitGroup
+	var limiter chan struct{}
+	if checkParallel > 0 {
+		limiter = make(chan struct{}, checkParallel)
+	}
+
 	for _, proxy := range proxiesToCheck {
 		wg.Add(1)
 		go func(p *models.ProxyConfig, gen uint64) {
 			defer wg.Done()
+			if limiter != nil {
+				limiter <- struct{}{}
+				defer func() {
+					<-limiter
+				}()
+			}
 			pc.checkProxyInternal(p, gen, true)
 		}(proxy, currentGeneration)
 	}
