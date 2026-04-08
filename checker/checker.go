@@ -384,9 +384,9 @@ func (pc *ProxyChecker) restoreMetricStates(proxies []*models.ProxyConfig, state
 		}
 
 		server := fmt.Sprintf("%s:%d", proxy.Server, proxy.Port)
-		statusValue := 0
+		statusValue := 0.0
 		if state.status {
-			statusValue = 1
+			statusValue = 1.0
 		}
 
 		metrics.RecordProxyStatus(proxy.Protocol, server, proxy.Name, proxy.SubName, statusValue)
