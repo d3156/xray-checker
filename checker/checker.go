@@ -37,6 +37,11 @@ type ProxyChecker struct {
 	generation      uint64
 }
 
+type proxyMetricState struct {
+	status  bool
+	latency time.Duration
+}
+
 func NewProxyChecker(proxies []*models.ProxyConfig, startPort int, ipCheckURL string, ipCheckTimeout int, genMethodURL string, downloadURL string, downloadTimeout int, downloadMinSize int64, checkMethod string, checkParallel int) *ProxyChecker {
 	return &ProxyChecker{
 		proxies:   proxies,
@@ -85,14 +90,7 @@ func (pc *ProxyChecker) checkProxyInternal(proxy *models.ProxyConfig, expectedGe
 		proxy.StableID = proxy.GenerateStableID()
 	}
 
-	metricKey := fmt.Sprintf("%s|%s:%d|%s|%s|%s",
-		proxy.Protocol,
-		proxy.Server,
-		proxy.Port,
-		proxy.Name,
-		proxy.SubName,
-		proxy.StableID,
-	)
+	metricKey := proxyMetricKey(proxy)
 
 	isGenerationValid := func() bool {
 		if !checkGeneration {
@@ -337,12 +335,77 @@ func (pc *ProxyChecker) ClearMetrics() {
 	})
 }
 
+func proxyMetricKey(proxy *models.ProxyConfig) string {
+	if proxy.StableID == "" {
+		proxy.StableID = proxy.GenerateStableID()
+	}
+
+	return fmt.Sprintf("%s|%s:%d|%s|%s|%s",
+		proxy.Protocol,
+		proxy.Server,
+		proxy.Port,
+		proxy.Name,
+		proxy.SubName,
+		proxy.StableID,
+	)
+}
+
+func (pc *ProxyChecker) snapshotMetricStates() map[string]proxyMetricState {
+	states := make(map[string]proxyMetricState, len(pc.proxies))
+
+	for _, proxy := range pc.proxies {
+		metricKey := proxyMetricKey(proxy)
+		status, ok := pc.currentMetrics.Load(metricKey)
+		if !ok {
+			continue
+		}
+
+		latency, _ := pc.latencyMetrics.Load(metricKey)
+		latencyDuration, _ := latency.(time.Duration)
+
+		states[proxy.StableID] = proxyMetricState{
+			status:  status.(bool),
+			latency: latencyDuration,
+		}
+	}
+
+	return states
+}
+
+func (pc *ProxyChecker) restoreMetricStates(proxies []*models.ProxyConfig, states map[string]proxyMetricState) {
+	for _, proxy := range proxies {
+		if proxy.StableID == "" {
+			proxy.StableID = proxy.GenerateStableID()
+		}
+
+		state, ok := states[proxy.StableID]
+		if !ok {
+			continue
+		}
+
+		server := fmt.Sprintf("%s:%d", proxy.Server, proxy.Port)
+		statusValue := 0
+		if state.status {
+			statusValue = 1
+		}
+
+		metrics.RecordProxyStatus(proxy.Protocol, server, proxy.Name, proxy.SubName, statusValue)
+		metrics.RecordProxyLatency(proxy.Protocol, server, proxy.Name, proxy.SubName, state.latency)
+
+		metricKey := proxyMetricKey(proxy)
+		pc.currentMetrics.Store(metricKey, state.status)
+		pc.latencyMetrics.Store(metricKey, state.latency)
+	}
+}
+
 func (pc *ProxyChecker) UpdateProxies(newProxies []*models.ProxyConfig) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
+	previousStates := pc.snapshotMetricStates()
 	atomic.AddUint64(&pc.generation, 1)
 	pc.ClearMetrics()
 	pc.proxies = newProxies
+	pc.restoreMetricStates(newProxies, previousStates)
 }
 
 func (pc *ProxyChecker) CheckAllProxies() {
@@ -385,18 +448,7 @@ func (pc *ProxyChecker) GetProxyStatus(name string) (bool, time.Duration, error)
 	var metricKey string
 	for _, proxy := range pc.proxies {
 		if proxy.Name == name {
-			if proxy.StableID == "" {
-				proxy.StableID = proxy.GenerateStableID()
-			}
-
-			metricKey = fmt.Sprintf("%s|%s:%d|%s|%s|%s",
-				proxy.Protocol,
-				proxy.Server,
-				proxy.Port,
-				proxy.Name,
-				proxy.SubName,
-				proxy.StableID,
-			)
+			metricKey = proxyMetricKey(proxy)
 			break
 		}
 	}
